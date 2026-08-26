@@ -1,0 +1,981 @@
+/* dsh-history — S-shaped trajectory timeline chrome.
+   "Energy trajectory" dark theme: a deep stage, glowing gradient connector,
+   and glassy node cards — the curve is the hero. */
+.dsh-history-root {
+  position: fixed;
+  z-index: 40;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(15, 18, 32, 0.92);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(120, 140, 255, 0.16);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 10, 0.55),
+    0 0 0 1px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  flex-direction: column;
+  /* Open/close transition: fade + gentle scale/slide instead of a hard pop. */
+  opacity: 0;
+  transform: scale(0.985) translateY(10px);
+  visibility: hidden;
+  transition:
+    opacity 0.22s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0.22s;
+}
+.dsh-history-root.dsh-history-open {
+  display: flex;
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+}
+
+.dsh-history-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(180deg, rgba(79, 109, 245, 0.12), transparent);
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+}
+.dsh-history-title {
+  font-weight: 700;
+  font-size: 14px;
+  background: linear-gradient(90deg, #8fb0ff, #c084fc, #f0a6d2);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  letter-spacing: 0.3px;
+}
+.dsh-history-sub {
+  font-size: 12px;
+  color: #8a93b8;
+}
+.dsh-history-close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: #9aa3c8;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.dsh-history-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: rotate(90deg);
+}
+
+/* Scrollable stage where the SVG path + node cards live. `height: 0` +
+   `flex: 1` + `overflow: auto` makes it a proper flex viewport: it fills the
+   panel's remaining height and scrolls when the layout overflows it. */
+.dsh-history-stage {
+  position: relative;
+  flex: 1 1 0;
+  height: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 30px 30px;
+  background:
+    radial-gradient(1200px 500px at 20% -10%, rgba(79, 109, 245, 0.10), transparent 60%),
+    radial-gradient(900px 420px at 85% 110%, rgba(236, 72, 153, 0.08), transparent 60%),
+    transparent;
+}
+
+/* Offscreen measurement box: clones of one ROW of cards are laid out here
+   horizontally (flex, like the real row) with opacity 0 — still occupying
+   space — so its offsetHeight equals the row's TALLEST card. */
+.dsh-history-measure {
+  position: absolute;
+  left: -99999px;
+  top: 0;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  display: flex;
+  align-items: flex-start;
+  width: max-content;
+}
+.dsh-history-measure .dsh-history-node {
+  position: static;
+  opacity: 0 !important;
+  transform: none !important;
+  transition: none !important;
+}
+
+/* Absolute-positioned SVG that draws the S-shaped connecting path. Width and
+   height come from the markup attributes (full layout size, so the connector
+   spans every row); do NOT force 100% here — that would compress the SVG to
+   the visible stage and break objectBoundingBox gradient resolution. */
+.dsh-history-path {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+/* Main connector: gradient energy stroke (the hero of the visual). */
+.dsh-history-path .path-line {
+  fill: none;
+  stroke: url(#dsh-history-energy);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 6px rgba(124, 106, 248, 0.55));
+  /* Normalized draw-in: pathLength=1 in markup, so these animate the whole
+     curve as one continuous ribbon from start to finish. */
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: dsh-draw 1.5s cubic-bezier(0.4, 0, 0.2, 1) 0.08s forwards;
+}
+@keyframes dsh-draw {
+  to { stroke-dashoffset: 0; }
+}
+/* Soft light streak under the main line (mirrors the same curve). */
+.dsh-history-path .path-glow {
+  stroke: url(#dsh-history-energy);
+  stroke-width: 9;
+  opacity: 0;
+  filter: blur(3px);
+  animation: dsh-glow-in 1s ease 0.5s forwards;
+}
+@keyframes dsh-glow-in {
+  from { opacity: 0; }
+  to { opacity: 0.35; }
+}
+.dsh-history-path .path-arrow {
+  fill: url(#dsh-history-energy);
+  opacity: 0;
+  animation: dsh-fade-in 0.5s ease 1.3s forwards;
+}
+@keyframes dsh-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* Energy pulse traveling along the drawn path (SMIL animateMotion). */
+.dsh-history-path .path-pulse {
+  fill: #8fb0ff;
+  opacity: 0;
+  filter: drop-shadow(0 0 8px rgba(143, 176, 255, 1));
+  animation: dsh-pulse-in 0.4s ease 1.55s forwards;
+}
+@keyframes dsh-pulse-in {
+  from { opacity: 0; }
+  to { opacity: 0.95; }
+}
+/* Fixed glowing dot at every card center — the connector plugs into it. */
+.dsh-history-path .path-node-dot {
+  fill: #cdd6ff;
+  filter: drop-shadow(0 0 6px rgba(160, 175, 255, 0.9));
+  opacity: 0;
+  transform-origin: center;
+  animation: dsh-node-pop 0.35s cubic-bezier(0.22, 1, 0.36, 1) 1.45s forwards;
+}
+@keyframes dsh-node-pop {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 0.95; transform: scale(1); }
+}
+
+/* One primary turn node card — dark glass. */
+.dsh-history-node {
+  position: absolute;
+  width: var(--node-w, 260px);
+  min-height: 0;
+  border-radius: 14px;
+  background: linear-gradient(165deg, rgba(30, 36, 64, 0.92), rgba(20, 24, 44, 0.94));
+  border: 1px solid rgba(130, 150, 255, 0.18);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 12, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  /* Cards start invisible, then stagger in along the traversal order. */
+  opacity: 0;
+  transform: translateY(14px) scale(0.96);
+  transition:
+    opacity 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+  transition-delay: calc(var(--reveal-order, 0) * 90ms + 320ms);
+}
+.dsh-history-node.dsh-history-in {
+  opacity: 1;
+  transform: none;
+}
+.dsh-history-node:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 16, 0.6),
+    0 0 0 1px rgba(140, 160, 255, 0.28),
+    0 0 24px rgba(99, 102, 241, 0.25);
+  border-color: rgba(140, 160, 255, 0.45);
+  transition-delay: 0ms;
+}
+/* During an expand/collapse re-flow, animate the cards gliding to their new
+   row positions (left/top transitions enabled only inside this window). */
+.dsh-history-relayout .dsh-history-node {
+  transition:
+    opacity 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.25s ease,
+    border-color 0.25s ease,
+    left 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    top 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: 0ms !important;
+}
+.dsh-history-node-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px;
+  background: linear-gradient(135deg, rgba(79, 109, 245, 0.95), rgba(139, 92, 246, 0.95));
+  color: #fff;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  overflow: hidden;
+}
+/* Luminous top hairline above the gradient head. */
+.dsh-history-node-head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+}
+/* One-shot sheen sweep across the head on reveal — a small "wow" moment. */
+.dsh-history-node-head::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  left: -50%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: skewX(-18deg);
+  opacity: 0;
+}
+.dsh-history-node.dsh-history-in .dsh-history-node-head::before {
+  animation: dsh-sheen 0.9s ease 0.7s 1;
+}
+@keyframes dsh-sheen {
+  0% { left: -50%; opacity: 0; }
+  20% { opacity: 1; }
+  100% { left: 130%; opacity: 0; }
+}
+.dsh-history-node-head:hover { filter: brightness(1.1); }
+.dsh-history-chevron {
+  font-size: 11px;
+  opacity: 0.9;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  flex-shrink: 0;
+}
+.dsh-history-node.dsh-history-expanded .dsh-history-chevron {
+  transform: rotate(90deg);
+}
+.dsh-history-node-title {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dsh-history-node-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.2);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+/* Current (last) node gets a soft breathing glow so the eye lands on where
+   the trajectory currently is. */
+.dsh-history-current .dsh-history-node-badge {
+  box-shadow: 0 0 0 0 rgba(160, 180, 255, 0.6);
+  animation: dsh-breathe 2.2s ease-in-out infinite;
+}
+@keyframes dsh-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(160, 180, 255, 0.6); }
+  50% { box-shadow: 0 0 0 6px rgba(160, 180, 255, 0); }
+}
+.dsh-history-node-meta {
+  font-size: 10.5px;
+  opacity: 0.85;
+  white-space: nowrap;
+  margin-left: auto;
+}
+.dsh-history-node-time {
+  font-size: 11px;
+  opacity: 0.85;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+/* Collapsed: clamp body + files + tools so the card stays compact; a soft
+   gradient fades the overflow instead of a hard cut. */
+.dsh-history-node-body,
+.dsh-history-files,
+.dsh-history-tools {
+  max-height: 0;
+  overflow: hidden;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-width: 0;
+  transition: max-height 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.dsh-history-node:not(.dsh-history-expanded) .dsh-history-node-body {
+  max-height: 84px;
+  padding: 8px 12px;
+  position: relative;
+}
+.dsh-history-node:not(.dsh-history-expanded) .dsh-history-node-body::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28px;
+  background: linear-gradient(transparent, rgba(20, 24, 44, 0.98));
+  pointer-events: none;
+}
+.dsh-history-node:not(.dsh-history-expanded) .dsh-history-files {
+  max-height: 28px;
+  padding: 6px 12px 4px;
+  border-top-width: 1px;
+  border-top-style: dashed;
+  border-top-color: rgba(160, 170, 220, 0.14);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.dsh-history-node:not(.dsh-history-expanded) .dsh-history-tools {
+  max-height: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  display: none;
+}
+.dsh-history-node.dsh-history-expanded .dsh-history-node-body {
+  max-height: 1000px;
+  padding: 10px 12px;
+}
+.dsh-history-node.dsh-history-expanded .dsh-history-files {
+  max-height: 1000px;
+  padding: 8px 12px 10px;
+  border-top-width: 1px;
+  border-top-style: dashed;
+  border-top-color: rgba(160, 170, 220, 0.14);
+}
+.dsh-history-node.dsh-history-expanded .dsh-history-tools {
+  max-height: 1000px;
+  padding: 0 12px 8px;
+}
+/* One-line "what is the AI doing" label — derived thinking, not raw log. */
+.dsh-history-intent {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 6px 12px 0;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: rgba(79, 109, 245, 0.1);
+  border: 1px solid rgba(130, 150, 255, 0.16);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.dsh-history-intent.has-error {
+  background: rgba(220, 38, 38, 0.1);
+  border-color: rgba(248, 113, 113, 0.28);
+}
+.dsh-history-intent-mark {
+  flex-shrink: 0;
+  font-weight: 800;
+  color: #8fb0ff;
+  font-size: 11px;
+}
+.dsh-history-intent.has-error .dsh-history-intent-mark { color: #f87171; }
+.dsh-history-intent-text {
+  color: #cdd6f2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.dsh-history-intent-note {
+  flex-shrink: 0;
+  color: #6d7bb0;
+  font-size: 10.5px;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mini cause-chain strip: how the turn's tool calls flowed (读→改→验).
+   Single line, scrolls horizontally when the chain is long. */
+.dsh-history-chain {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  margin: 6px 12px 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 10.5px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+.dsh-history-chain-link {
+  color: #9aa8d8;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(79, 109, 245, 0.12);
+  white-space: nowrap;
+}
+.dsh-history-chain-link.first { background: rgba(139, 92, 246, 0.16); color: #c4b5fd; }
+.dsh-history-chain-link.error { background: rgba(220, 38, 38, 0.2); color: #f87171; }
+.dsh-history-chain-arrow {
+  color: #5c6a9e;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.dsh-history-node-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dsh-history-user {
+  font-size: 12.5px;
+  color: #e6e9f5;
+  line-height: 1.5;
+  max-height: 76px;
+  overflow: hidden;
+}
+.dsh-history-user::before {
+  content: "问";
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(79, 109, 245, 0.25);
+  color: #8fb0ff;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: 1px;
+}
+.dsh-history-reply {
+  font-size: 11.5px;
+  color: #aab3d4;
+  line-height: 1.45;
+  max-height: 58px;
+  overflow: hidden;
+}
+.dsh-history-reply::before {
+  content: "答";
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: 1px;
+}
+
+/* File sub-node list inside a card — one horizontal strip (label + chips). */
+.dsh-history-files {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px dashed rgba(160, 170, 220, 0.14);
+  padding: 6px 12px 4px;
+  background: rgba(255, 255, 255, 0.025);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.dsh-history-files-label {
+  font-size: 11px;
+  color: #6d7bb0;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  flex-shrink: 0;
+}
+.dsh-history-files-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+.dsh-history-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #aab3d4;
+  line-height: 1.3;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.dsh-history-file-name {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  color: #cdd6f2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dsh-history-file-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(79, 109, 245, 0.22);
+  color: #8fb0ff;
+}
+.dsh-history-file-tag.write { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+.dsh-history-file-tag.search { background: rgba(139, 92, 246, 0.22); color: #c084fc; }
+.dsh-history-file-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: #5d6a9e;
+  flex-shrink: 0;
+}
+
+/* Edge tool chips (the tool-call sequence inside a card). */
+.dsh-history-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 12px 8px;
+}
+.dsh-history-tool-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #9aa6cc;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.dsh-history-tool-chip:hover {
+  background: rgba(255, 255, 255, 0.12);
+  transform: translateY(-1px);
+}
+.dsh-history-tool-chip.error { background: rgba(220, 38, 38, 0.18); color: #f87171; border-color: rgba(248, 113, 113, 0.25); }
+
+/* Empty / loading states. */
+.dsh-history-empty {
+  padding: 40px;
+  text-align: center;
+  color: #6d7bb0;
+  font-size: 13px;
+  font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+/* Toggle button injected into the tablist. */
+.dsh-history-open-btn {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.dsh-history-open-btn:hover { background: rgba(0, 0, 0, 0.06); }
+.dsh-history-open-btn.dsh-history-active {
+  color: #4f6df5;
+  background: rgba(79, 109, 245, 0.12);
+  font-weight: 600;
+}
+
+/* When inside the trajectory toolbar (left of its search box): compact pill
+   that visually matches the DSH toolbar buttons (height / radius / font). */
+.dsh-history-open-btn.dsh-history-in-toolbar {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-caption, #6b7280);
+  background: var(--dsw-alias-bg-layer-2, transparent);
+  border: 1px solid var(--dsw-alias-border-l2, transparent);
+  flex: none;
+  margin-right: 2px;
+}
+.dsh-history-open-btn.dsh-history-in-toolbar:hover {
+  border-color: var(--dsw-alias-label-caption, #9aa1af);
+  background: var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.06));
+}
+.dsh-history-open-btn.dsh-history-in-toolbar.dsh-history-active {
+  color: var(--dsw-alias-state-business-primary, #4f6df5);
+  border-color: var(--dsw-alias-state-business-primary, #4f6df5);
+  background: var(--dsw-alias-state-business-subtle, rgba(79, 109, 245, 0.12));
+}
+
+/* Insight strip: derived stats above the timeline (computed facts about the
+   work — hot files, tool mix, failures). Absolute overlay at the stage top;
+   the layout offsets the cards below it (see layoutGraph offsetY). */
+.dsh-history-insights {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  margin: 8px 0 0;
+  border-radius: 12px;
+  background: rgba(24, 30, 56, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(130, 150, 255, 0.14);
+  box-shadow: 0 6px 24px rgba(0, 0, 10, 0.35);
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+}
+.dsh-history-insight-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 52px;
+}
+.dsh-history-insight-value {
+  font-size: 16px;
+  font-weight: 800;
+  background: linear-gradient(90deg, #8fb0ff, #c084fc);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  line-height: 1.2;
+}
+.dsh-history-insight-label {
+  font-size: 10px;
+  color: #6d7bb0;
+  letter-spacing: 0.3px;
+}
+.dsh-history-insight-stat.has-error .dsh-history-insight-value {
+  background: linear-gradient(90deg, #f87171, #fb923c);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dsh-history-insight-hot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 180px;
+  flex: 1;
+}
+.dsh-history-insight-hot-label {
+  font-size: 10px;
+  color: #6d7bb0;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.dsh-history-insight-hot-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  overflow: hidden;
+}
+.dsh-history-insight-hot-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(79, 109, 245, 0.4), rgba(236, 72, 153, 0.28));
+  opacity: 0.9;
+}
+.dsh-history-insight-hot-name {
+  position: relative;
+  color: #cdd6f2;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.dsh-history-insight-hot-count {
+  position: relative;
+  color: #8a96c4;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.dsh-history-insight-dist {
+  display: flex;
+  height: 6px;
+  width: 120px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+.dsh-history-insight-dist-seg.read { background: #4f6df5; }
+.dsh-history-insight-dist-seg.write { background: #f59e0b; }
+.dsh-history-insight-dist-seg.search { background: #8b5cf6; }
+.dsh-history-insight-dist-seg.exec { background: #10b981; }
+.dsh-history-insight-dist-seg.other { background: #64748b; }
+
+/* Detail window: full-stage scrim + panel positioned near the clicked card
+   (JS sets overlay left/top/width/height; panel is absolutely placed inside).
+   The card stays compact; all depth lives here. */
+.dsh-history-detail {
+  position: absolute;
+  z-index: 50;
+  background: rgba(8, 10, 20, 0.45);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: dsh-detail-in 0.18s ease;
+}
+@keyframes dsh-detail-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.dsh-history-detail-panel {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border-radius: 14px;
+  background: linear-gradient(170deg, #1c2240, #12162c);
+  border: 1px solid rgba(130, 150, 255, 0.22);
+  box-shadow: 0 24px 80px rgba(0, 0, 10, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  animation: dsh-detail-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes dsh-detail-pop {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.dsh-history-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(79, 109, 245, 0.3), rgba(139, 92, 246, 0.22));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.dsh-history-detail-title {
+  font-size: 14px;
+  font-weight: 700;
+  background: linear-gradient(90deg, #8fb0ff, #c084fc);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dsh-history-detail-body {
+  padding: 14px 16px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dsh-history-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dsh-history-detail-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a96c4;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.dsh-history-detail-label-user { color: #8fb0ff; }
+.dsh-history-detail-label-reply { color: #34d399; }
+/* Process-pattern summary rows (natural-language tool insights). */
+.dsh-history-detail-pattern {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #cdd6f2;
+  padding: 7px 11px;
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.22);
+}
+.dsh-history-detail-text {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #dbe2f5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.dsh-history-detail-user { color: #dbe2f5; }
+.dsh-history-detail-reply { color: #aab6d8; }
+.dsh-history-detail-file {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.dsh-history-detail-file-name {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  color: #cdd6f2;
+  word-break: break-all;
+}
+.dsh-history-detail-file-count {
+  font-size: 10.5px;
+  color: #6d7bb0;
+}
+.dsh-history-detail-ops {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dsh-history-detail-op {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.dsh-history-detail-op:hover { background: rgba(255, 255, 255, 0.06); }
+.dsh-history-detail-op.error .dsh-history-detail-op-name { color: #f87171; }
+.dsh-history-detail-op-name {
+  flex-shrink: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  color: #8fb0ff;
+  font-weight: 600;
+  min-width: 56px;
+}
+.dsh-history-detail-op-target {
+  color: #aab6d8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.dsh-history-detail-op-err {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: #f87171;
+  background: rgba(220, 38, 38, 0.18);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.dsh-history-detail-op-detail {
+  display: block;
+  margin: 2px 0 4px 62px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a96c4;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.dsh-history-detail-op-detail[hidden] { display: none; }
+
+/* Detail-window cause chain: numbered vertical step flow. */
+.dsh-history-detail-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(130, 150, 255, 0.12);
+}
+.dsh-history-detail-chain-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 11.5px;
+}
+.dsh-history-detail-chain-step {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(79, 109, 245, 0.2);
+  color: #8fb0ff;
+  font-weight: 800;
+  font-size: 10px;
+}
+.dsh-history-detail-chain-rel {
+  flex-shrink: 0;
+  min-width: 72px;
+  color: #6d7bb0;
+  font-size: 10px;
+}
+.dsh-history-detail-chain-rel.start { color: #8b5cf6; }
+.dsh-history-detail-chain-act {
+  color: #dbe2f5;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  word-break: break-all;
+}
+.dsh-history-detail-chain-act.error { color: #f87171; }
+
+/* Respect reduced-motion preferences. */
+@media (prefers-reduced-motion: reduce) {
+  .dsh-history-root,
+  .dsh-history-node,
+  .dsh-history-close,
+  .dsh-history-open-btn,
+  .dsh-history-tool-chip {
+    transition: none;
+  }
+  .dsh-history-path .path-line,
+  .dsh-history-path .path-glow,
+  .dsh-history-path .path-arrow,
+  .dsh-history-path .path-pulse,
+  .dsh-history-path .path-node-dot,
+  .dsh-history-current .dsh-history-node-badge {
+    animation: none;
+  }
+  .dsh-history-path .path-line { stroke-dashoffset: 0; }
+  .dsh-history-path .path-glow { opacity: 0.35; }
+  .dsh-history-path .path-arrow { opacity: 1; }
+  .dsh-history-path .path-pulse { display: none; }
+  .dsh-history-path .path-node-dot { opacity: 0.95; }
+  .dsh-history-node { opacity: 1; transform: none; }
+}

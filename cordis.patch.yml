@@ -1,0 +1,7 @@
+# dsh-history 组合包层：安装本 bundle 时插入插件行。
+# 该行让 loader 把 dsh-history 作为一条 `dsh.client` 行编入浏览器 roster，
+# 由 dsh-client-modules 扫描进 window.__DSH_BOOT__，并通过
+# /plugins/dsh-history/client.js 提供浏览器 bundle。
+- insert:
+    - id: dsh-history
+      name: 'dsh-history'
